@@ -194,6 +194,15 @@
             }
         });
     }
+    
+    if (self.debugInfo.unSendCount > 50) {
+        NSUInteger videoBitRate = [self.videoEncoder videoBitRate];
+        if (videoBitRate > self.videoConfiguration.videoMinBitRate) {
+            videoBitRate = videoBitRate - 100 * 1000;
+            [self.videoEncoder setVideoBitRate:videoBitRate];
+            NSLog(@"Decline bitrate %@", @(videoBitRate));
+        }
+    }
 }
 
 - (void)socketBufferStatus:(nullable id<LFStreamSocket>)socket status:(LFLiveBuffferState)status {
@@ -201,13 +210,13 @@
         NSUInteger videoBitRate = [self.videoEncoder videoBitRate];
         if (status == LFLiveBuffferDecline) {
             if (videoBitRate < _videoConfiguration.videoMaxBitRate) {
-                videoBitRate = videoBitRate + 50 * 1000;
+                videoBitRate = videoBitRate + 30 * 1000;
                 [self.videoEncoder setVideoBitRate:videoBitRate];
                 NSLog(@"Increase bitrate %@", @(videoBitRate));
             }
         } else {
             if (videoBitRate > self.videoConfiguration.videoMinBitRate) {
-                videoBitRate = videoBitRate - 100 * 1000;
+                videoBitRate = videoBitRate - 500 * 1000;
                 [self.videoEncoder setVideoBitRate:videoBitRate];
                 NSLog(@"Decline bitrate %@", @(videoBitRate));
             }
