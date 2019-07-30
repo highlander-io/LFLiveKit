@@ -198,9 +198,11 @@
     if (self.debugInfo.unSendCount > 40) {
         NSUInteger videoBitRate = [self.videoEncoder videoBitRate];
         if (videoBitRate > self.videoConfiguration.videoMinBitRate) {
-            videoBitRate = videoBitRate - 5 * 1000;
-            [self.videoEncoder setVideoBitRate:videoBitRate];
-            NSLog(@"Decline bitrate %@", @(videoBitRate));
+            videoBitRate = videoBitRate - 10 * 1000;
+            if (videoBitRate > (self.videoConfiguration.videoMinBitRate - 1000)) {
+                [self.videoEncoder setVideoBitRate:videoBitRate];
+                NSLog(@"Decline bitrate %@", @(videoBitRate));
+            }
         }
     }
 }
