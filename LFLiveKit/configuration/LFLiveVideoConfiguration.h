@@ -8,6 +8,7 @@
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <CoreMedia/CoreMedia.h>
 
 /// 视频分辨率(都是16：9 当此设备不支持当前分辨率，自动降低一级)
 typedef NS_ENUM (NSUInteger, LFLiveVideoSessionPreset){
@@ -16,7 +17,9 @@ typedef NS_ENUM (NSUInteger, LFLiveVideoSessionPreset){
     /// 中分辨率
     LFCaptureSessionPreset540x960 = 1,
     /// 高分辨率
-    LFCaptureSessionPreset720x1280 = 2
+    LFCaptureSessionPreset720x1280 = 2,
+    
+    LFCaptureSessionPreset1080x1920 = 3
 };
 
 /// 视频质量
@@ -39,6 +42,8 @@ typedef NS_ENUM (NSUInteger, LFLiveVideoQuality){
     LFLiveVideoQuality_High2 = 7,
     /// 分辨率： 720 *1280 帧数：30 码率：1200Kps
     LFLiveVideoQuality_High3 = 8,
+    /// 分辨率： 720 *1280 帧数：24 码率：1600Kps
+    LFLiveVideoQuality_High4 = 9,
     /// 默认配置
     LFLiveVideoQuality_Default = LFLiveVideoQuality_Low2
 };
@@ -52,6 +57,10 @@ typedef NS_ENUM (NSUInteger, LFLiveVideoQuality){
 
 /// 视频配置(质量 & 是否是横屏)
 + (instancetype)defaultConfigurationForQuality:(LFLiveVideoQuality)videoQuality outputImageOrientation:(UIInterfaceOrientation)outputImageOrientation;
+
++ (instancetype)defaultConfigurationFromSampleBuffer:(CMSampleBufferRef)sampleBuffer;
+
++ (LFLiveVideoConfiguration *)videoConfigurationForQuality:(LFLiveVideoQuality)videoQuality;
 
 #pragma mark - Attribute
 ///=============================================================================
@@ -98,5 +107,11 @@ typedef NS_ENUM (NSUInteger, LFLiveVideoQuality){
 
 ///< 是否是横屏
 @property (nonatomic, assign, readonly) BOOL landscape;
+
+///< 浮水印來源view
+@property (nonatomic, strong) UIView *watermarkView;
+
+// Blend screenshot of animationView for each camera frame
+@property (nonatomic, strong) UIView *animationView;
 
 @end

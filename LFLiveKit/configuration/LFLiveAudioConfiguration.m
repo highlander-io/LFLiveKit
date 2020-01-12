@@ -20,6 +20,8 @@
 + (instancetype)defaultConfigurationForQuality:(LFLiveAudioQuality)audioQuality {
     LFLiveAudioConfiguration *audioConfig = [LFLiveAudioConfiguration new];
     audioConfig.numberOfChannels = 2;
+    audioConfig.echoCancellation = NO;
+    
     switch (audioQuality) {
     case LFLiveAudioQuality_Low: {
         audioConfig.audioBitrate = audioConfig.numberOfChannels == 1 ? LFLiveAudioBitRate_32Kbps : LFLiveAudioBitRate_64Kbps;
@@ -48,6 +50,20 @@
         break;
     }
 
+    return audioConfig;
+}
+
++ (instancetype)defaultConfigurationFromSampleBuffer:(CMSampleBufferRef)sampleBuffer {
+    CMAudioFormatDescriptionRef desc = CMSampleBufferGetFormatDescription(sampleBuffer);
+    AudioStreamBasicDescription asbd = *CMAudioFormatDescriptionGetStreamBasicDescription(desc);
+    return [self defaultConfigurationFromFormat:asbd];
+}
+
++ (instancetype)defaultConfigurationFromFormat:(AudioStreamBasicDescription)format {
+    LFLiveAudioConfiguration *audioConfig = [LFLiveAudioConfiguration new];
+    audioConfig.audioBitrate = LFLiveAudioBitRate_96Kbps;
+    audioConfig.audioSampleRate = format.mSampleRate;
+    audioConfig.numberOfChannels = format.mChannelsPerFrame;
     return audioConfig;
 }
 
@@ -136,6 +152,7 @@
     [aCoder encodeObject:@(self.audioSampleRate) forKey:@"audioSampleRate"];
     [aCoder encodeObject:@(self.audioBitrate) forKey:@"audioBitrate"];
     [aCoder encodeObject:[NSString stringWithUTF8String:self.asc] forKey:@"asc"];
+    [aCoder encodeObject:@(self.echoCancellation) forKey:@"echoCancellation"];
 }
 
 - (id)initWithCoder:(NSCoder *)aDecoder {
@@ -144,6 +161,7 @@
     _audioSampleRate = [[aDecoder decodeObjectForKey:@"audioSampleRate"] unsignedIntegerValue];
     _audioBitrate = [[aDecoder decodeObjectForKey:@"audioBitrate"] unsignedIntegerValue];
     _asc = strdup([[aDecoder decodeObjectForKey:@"asc"] cStringUsingEncoding:NSUTF8StringEncoding]);
+    _echoCancellation = [[aDecoder decodeObjectForKey:@"echoCancellation"] boolValue];
     return self;
 }
 
@@ -157,7 +175,8 @@
         return object.numberOfChannels == self.numberOfChannels &&
                object.audioBitrate == self.audioBitrate &&
                strcmp(object.asc, self.asc) == 0 &&
-               object.audioSampleRate == self.audioSampleRate;
+               object.audioSampleRate == self.audioSampleRate &&
+               object.echoCancellation == self.echoCancellation;
     }
 }
 
@@ -166,7 +185,8 @@
     NSArray *values = @[@(_numberOfChannels),
                         @(_audioSampleRate),
                         [NSString stringWithUTF8String:self.asc],
-                        @(_audioBitrate)];
+                        @(_audioBitrate),
+                        @(_echoCancellation)];
 
     for (NSObject *value in values) {
         hash ^= value.hash;
@@ -186,6 +206,7 @@
     [desc appendFormat:@" audioSampleRate:%zi", self.audioSampleRate];
     [desc appendFormat:@" audioBitrate:%zi", self.audioBitrate];
     [desc appendFormat:@" audioHeader:%@", [NSString stringWithUTF8String:self.asc]];
+    [desc appendFormat:@" echoCancellation:%@", @(self.echoCancellation)];
     return desc;
 }
 
