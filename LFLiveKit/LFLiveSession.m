@@ -500,24 +500,20 @@
 - (void)socketBufferStatus:(nullable id<LFStreamSocket>)socket status:(LFLiveBuffferState)status {
     if((self.captureType & LFLiveCaptureMaskVideo || self.captureType & LFLiveInputMaskVideo) && self.adaptiveBitrate){
         NSUInteger videoBitRate = [self.videoEncoder videoBitRate];
-        NSUInteger targetBitrate = videoBitRate;
         if (status == LFLiveBuffferDecline) {
             if (videoBitRate < _videoConfiguration.videoMaxBitRate) {
-                targetBitrate = videoBitRate + 50 * 1000;
-                [self.videoEncoder setVideoBitRate:targetBitrate];
-                NSLog(@"Increase bitrate %@", @(targetBitrate));
+                videoBitRate = videoBitRate + 20 * 1000;
+                [self.videoEncoder setVideoBitRate:videoBitRate];
+                NSLog(@"Increase bitrate %@", @(videoBitRate));
             }
-        } else {
+        } else if (status == LFLiveBuffferIncrease) {
             if (videoBitRate > self.videoConfiguration.videoMinBitRate) {
-                targetBitrate = videoBitRate - 100 * 1000;
-                [self.videoEncoder setVideoBitRate:targetBitrate];
-                NSLog(@"Decline bitrate %@", @(targetBitrate));
+                videoBitRate = videoBitRate - 400 * 1000;
+                 if (videoBitRate > (self.videoConfiguration.videoMinBitRate - 1000)) {
+                    [self.videoEncoder setVideoBitRate:videoBitRate];
+                    NSLog(@"Decline bitrate %@", @(videoBitRate));
+                 }
             }
-        }
-        if (targetBitrate != videoBitRate) {
-            [[LFStreamLog logger] logWithDict:@{@"lt": @"pbrt",
-                                                @"vbr": @(targetBitrate)
-                                                }];
         }
     }
 }
