@@ -7,6 +7,7 @@
 //
 
 #import "LFStreamRTMPSocket.h"
+#import "LFStreamLog.h"
 
 #if __has_include(<pili-librtmp/rtmp.h>)
 #import <pili-librtmp/rtmp.h>
@@ -69,6 +70,8 @@ SAVC(mp4a);
 @property (nonatomic, assign) BOOL sendVideoHead;
 @property (nonatomic, assign) BOOL sendAudioHead;
 
+@property (strong, nonatomic) NSData *seiData;
+
 @end
 
 @implementation LFStreamRTMPSocket
@@ -126,14 +129,21 @@ SAVC(mp4a);
 
 - (void)stop {
     dispatch_async(self.rtmpSendQueue, ^{
-        [self _stop];
+        [self _stopWithStatus:LFLiveStop];
         [NSObject cancelPreviousPerformRequestsWithTarget:self];
     });
 }
 
-- (void)_stop {
+- (void)switched {
+    dispatch_async(self.rtmpSendQueue, ^{
+        [self _stopWithStatus:LFLiveSwitched];
+        [NSObject cancelPreviousPerformRequestsWithTarget:self];
+    });
+}
+
+- (void)_stopWithStatus:(LFLiveState)status {
     if (self.delegate && [self.delegate respondsToSelector:@selector(socketStatus:status:)]) {
-        [self.delegate socketStatus:self status:LFLiveStop];
+        [self.delegate socketStatus:self status:status];
     }
     if (_rtmp != NULL) {
         PILI_RTMP_Close(_rtmp, &_error);
@@ -156,22 +166,38 @@ SAVC(mp4a);
     _delegate = delegate;
 }
 
+- (void)streamURLChanged:(NSString *)url {
+    dispatch_async(self.rtmpSendQueue, ^{
+        self.stream.url = url;
+        self.debugInfo.streamId = self.stream.streamId;
+        self.debugInfo.uploadUrl = self.stream.url;
+        self.debugInfo.isRtmp = YES;
+
+        [self clean];
+        [self reconnect];
+    });
+}
+
 #pragma mark -- CustomMethod
+
 - (void)sendFrame {
     __weak typeof(self) _self = self;
-     dispatch_async(self.rtmpSendQueue, ^{
+    dispatch_async(self.rtmpSendQueue, ^{
         if (!_self.isSending && _self.buffer.list.count > 0) {
             _self.isSending = YES;
-
+            
             if (!_self.isConnected || _self.isReconnecting || _self.isConnecting || !_rtmp){
-                _self.isSending = NO;
+                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                    // 这里只为了不循环调用sendFrame方法 调用栈是保证先出栈再进栈
+                    _self.isSending = NO;
+                });
                 return;
             }
-
+            
             // 调用发送接口
             LFFrame *frame = [_self.buffer popFirstObject];
             if ([frame isKindOfClass:[LFVideoFrame class]]) {
-                if (!_self.sendVideoHead) {
+                if (!_self.sendVideoHead || ((LFVideoFrame*)frame).formatChanged) {
                     _self.sendVideoHead = YES;
                     if(!((LFVideoFrame*)frame).sps || !((LFVideoFrame*)frame).pps){
                         _self.isSending = NO;
@@ -193,12 +219,12 @@ SAVC(mp4a);
                     [_self sendAudio:frame];
                 }
             }
-
+            
             //debug更新
             _self.debugInfo.totalFrame++;
             _self.debugInfo.dropFrame += _self.buffer.lastDropFrames;
             _self.buffer.lastDropFrames = 0;
-
+            
             _self.debugInfo.dataFlow += frame.data.length;
             _self.debugInfo.elapsedMilli = CACurrentMediaTime() * 1000 - _self.debugInfo.timeStamp;
             if (_self.debugInfo.elapsedMilli < 1000) {
@@ -208,7 +234,7 @@ SAVC(mp4a);
                 } else {
                     _self.debugInfo.capturedVideoCount++;
                 }
-
+                
                 _self.debugInfo.unSendCount = _self.buffer.list.count;
             } else {
                 _self.debugInfo.currentBandwidth = _self.debugInfo.bandwidth;
@@ -223,9 +249,23 @@ SAVC(mp4a);
                 _self.debugInfo.timeStamp = CACurrentMediaTime() * 1000;
             }
             
+            _self.debugInfo.elapsedMilliForSpeed = CACurrentMediaTime() * 1000 - _self.debugInfo.timeStampForSpeed;
+            _self.debugInfo.bandwidthForSpeed += frame.data.length;
+            if(_self.debugInfo.elapsedMilliForSpeed >=20*1000 ){
+                int speed = (int)_self.debugInfo.bandwidthForSpeed/20;
+                if(_self.debugInfo.elapsedMilliForSpeed <100*1000){
+                    //非第一次统计.才记录.
+                    [[LFStreamLog logger] logWithDict:@{@"lt": @"pspd",
+                                                        @"spd": @(speed)}];
+                }
+                _self.debugInfo.lastSpeed = _self.debugInfo.bandwidthForSpeed;
+                _self.debugInfo.bandwidthForSpeed = 0;
+                _self.debugInfo.timeStampForSpeed = CACurrentMediaTime() * 1000;
+            }
+            
             //修改发送状态
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                //< 这里只为了不循环调用sendFrame方法 调用栈是保证先出栈再进栈
+                // 这里只为了不循环调用sendFrame方法 调用栈是保证先出栈再进栈
                 _self.isSending = NO;
             });
             
@@ -250,13 +290,13 @@ SAVC(mp4a);
     //分配与初始化
     _rtmp = PILI_RTMP_Alloc();
     PILI_RTMP_Init(_rtmp);
-
+    
     //设置URL
     if (PILI_RTMP_SetupURL(_rtmp, push_url, &_error) == FALSE) {
         //log(LOG_ERR, "RTMP_SetupURL() failed!");
         goto Failed;
     }
-
+    
     _rtmp->m_errorCallback = RTMPErrorCallback;
     _rtmp->m_connCallback = ConnectionTimeCallback;
     _rtmp->m_userData = (__bridge void *)self;
@@ -265,29 +305,40 @@ SAVC(mp4a);
     
     //设置可写，即发布流，这个函数必须在连接前使用，否则无效
     PILI_RTMP_EnableWrite(_rtmp);
-
+    
     //连接服务器
     if (PILI_RTMP_Connect(_rtmp, NULL, &_error) == FALSE) {
         goto Failed;
     }
-
+    
+    // logging
+    [LFStreamLog logger].host = [NSString stringWithUTF8String:_rtmp->ipstr];
+    [[LFStreamLog logger] fetchHostStatus];
+    
     //连接流
     if (PILI_RTMP_ConnectStream(_rtmp, 0, &_error) == FALSE) {
         goto Failed;
     }
-
+    int64_t initInterval = ([NSDate date].timeIntervalSince1970 - [LFStreamLog logger].initStartTime) * 1000;
+    [[LFStreamLog logger] logWithDict:@{@"lt": @"pinit",
+                                        @"interval": @(initInterval)}];
+    //reconnect times
+    [[LFStreamLog logger] logWithDict:@{@"lt": @"retryTimes",@"retryTimes": @(self.retryTimes4netWorkBreaken),
+                                        @"maxTryTimes": @(self.reconnectCount)}];
+    
     if (self.delegate && [self.delegate respondsToSelector:@selector(socketStatus:status:)]) {
         [self.delegate socketStatus:self status:LFLiveStart];
     }
-
+    
     [self sendMetaData];
-
+    
     _isConnected = YES;
     _isConnecting = NO;
     _isReconnecting = NO;
     _isSending = NO;
+    _retryTimes4netWorkBreaken = 0;
     return 0;
-
+    
 Failed:
     PILI_RTMP_Close(_rtmp, &_error);
     PILI_RTMP_Free(_rtmp);
@@ -300,9 +351,9 @@ Failed:
 
 - (void)sendMetaData {
     PILI_RTMPPacket packet;
-
+    
     char pbuf[2048], *pend = pbuf + sizeof(pbuf);
-
+    
     packet.m_nChannel = 0x03;                   // control channel (invoke)
     packet.m_headerType = RTMP_PACKET_SIZE_LARGE;
     packet.m_packetType = RTMP_PACKET_TYPE_INFO;
@@ -310,41 +361,41 @@ Failed:
     packet.m_nInfoField2 = _rtmp->m_stream_id;
     packet.m_hasAbsTimestamp = TRUE;
     packet.m_body = pbuf + RTMP_MAX_HEADER_SIZE;
-
+    
     char *enc = packet.m_body;
     enc = AMF_EncodeString(enc, pend, &av_setDataFrame);
     enc = AMF_EncodeString(enc, pend, &av_onMetaData);
-
+    
     *enc++ = AMF_OBJECT;
-
+    
     enc = AMF_EncodeNamedNumber(enc, pend, &av_duration, 0.0);
     enc = AMF_EncodeNamedNumber(enc, pend, &av_fileSize, 0.0);
-
+    
     // videosize
     enc = AMF_EncodeNamedNumber(enc, pend, &av_width, _stream.videoConfiguration.videoSize.width);
     enc = AMF_EncodeNamedNumber(enc, pend, &av_height, _stream.videoConfiguration.videoSize.height);
-
+    
     // video
     enc = AMF_EncodeNamedString(enc, pend, &av_videocodecid, &av_avc1);
-
+    
     enc = AMF_EncodeNamedNumber(enc, pend, &av_videodatarate, _stream.videoConfiguration.videoBitRate / 1000.f);
     enc = AMF_EncodeNamedNumber(enc, pend, &av_framerate, _stream.videoConfiguration.videoFrameRate);
-
+    
     // audio
     enc = AMF_EncodeNamedString(enc, pend, &av_audiocodecid, &av_mp4a);
     enc = AMF_EncodeNamedNumber(enc, pend, &av_audiodatarate, _stream.audioConfiguration.audioBitrate);
-
+    
     enc = AMF_EncodeNamedNumber(enc, pend, &av_audiosamplerate, _stream.audioConfiguration.audioSampleRate);
     enc = AMF_EncodeNamedNumber(enc, pend, &av_audiosamplesize, 16.0);
     enc = AMF_EncodeNamedBoolean(enc, pend, &av_stereo, _stream.audioConfiguration.numberOfChannels == 2);
-
+    
     // sdk version
     enc = AMF_EncodeNamedString(enc, pend, &av_encoder, &av_SDKVersion);
-
+    
     *enc++ = 0;
     *enc++ = 0;
     *enc++ = AMF_OBJECT_END;
-
+    
     packet.m_nBodySize = (uint32_t)(enc - packet.m_body);
     if (!PILI_RTMP_SendPacket(_rtmp, &packet, FALSE, &_error)) {
         return;
@@ -352,56 +403,66 @@ Failed:
 }
 
 - (void)sendVideoHeader:(LFVideoFrame *)videoFrame {
-
+    
     unsigned char *body = NULL;
     NSInteger iIndex = 0;
     NSInteger rtmpLength = 1024;
     const char *sps = videoFrame.sps.bytes;
     const char *pps = videoFrame.pps.bytes;
-    NSInteger sps_len = videoFrame.sps.length;
-    NSInteger pps_len = videoFrame.pps.length;
-
+    NSInteger spsLen = videoFrame.sps.length;
+    NSInteger ppsLen = videoFrame.pps.length;
+    
     body = (unsigned char *)malloc(rtmpLength);
     memset(body, 0, rtmpLength);
-
+    
     body[iIndex++] = 0x17;
     body[iIndex++] = 0x00;
-
+    
     body[iIndex++] = 0x00;
     body[iIndex++] = 0x00;
     body[iIndex++] = 0x00;
-
+    
     body[iIndex++] = 0x01;
     body[iIndex++] = sps[1];
     body[iIndex++] = sps[2];
     body[iIndex++] = sps[3];
     body[iIndex++] = 0xff;
-
+    
     /*sps*/
     body[iIndex++] = 0xe1;
-    body[iIndex++] = (sps_len >> 8) & 0xff;
-    body[iIndex++] = sps_len & 0xff;
-    memcpy(&body[iIndex], sps, sps_len);
-    iIndex += sps_len;
-
+    body[iIndex++] = (spsLen >> 8) & 0xff;
+    body[iIndex++] = spsLen & 0xff;
+    memcpy(&body[iIndex], sps, spsLen);
+    iIndex += spsLen;
+    
     /*pps*/
     body[iIndex++] = 0x01;
-    body[iIndex++] = (pps_len >> 8) & 0xff;
-    body[iIndex++] = (pps_len) & 0xff;
-    memcpy(&body[iIndex], pps, pps_len);
-    iIndex += pps_len;
-
+    body[iIndex++] = (ppsLen >> 8) & 0xff;
+    body[iIndex++] = (ppsLen) & 0xff;
+    memcpy(&body[iIndex], pps, ppsLen);
+    iIndex += ppsLen;
+    
     [self sendPacket:RTMP_PACKET_TYPE_VIDEO data:body size:iIndex nTimestamp:0];
     free(body);
 }
 
 - (void)sendVideo:(LFVideoFrame *)frame {
-
+    if (_seiData) {
+        [self sendSeiAndVideo:frame];
+        _seiData = nil;
+        return;
+    }
+    
     NSInteger i = 0;
     NSInteger rtmpLength = frame.data.length + 9;
+    if (frame.isKeyFrame && frame.sps && frame.pps) {
+        NSInteger spsLen = frame.sps.length;
+        NSInteger ppsLen = frame.pps.length;
+        rtmpLength += 8 + spsLen + ppsLen;
+    }
     unsigned char *body = (unsigned char *)malloc(rtmpLength);
     memset(body, 0, rtmpLength);
-
+    
     if (frame.isKeyFrame) {
         body[i++] = 0x17;        // 1:Iframe  7:AVC
     } else {
@@ -411,12 +472,129 @@ Failed:
     body[i++] = 0x00;
     body[i++] = 0x00;
     body[i++] = 0x00;
+    
+    if (frame.isKeyFrame && frame.sps && frame.pps) {
+        /*sps*/
+        NSInteger spsLen = frame.sps.length;
+        body[i++] = (spsLen >> 24) & 0xff;
+        body[i++] = (spsLen >> 16) & 0xff;
+        body[i++] = (spsLen >>  8) & 0xff;
+        body[i++] = (spsLen) & 0xff;
+        memcpy(&body[i], frame.sps.bytes, spsLen);
+        i += spsLen;
+        
+        /*pps*/
+        NSInteger ppsLen = frame.pps.length;
+        body[i++] = (ppsLen >> 24) & 0xff;
+        body[i++] = (ppsLen >> 16) & 0xff;
+        body[i++] = (ppsLen >>  8) & 0xff;
+        body[i++] = (ppsLen) & 0xff;
+        memcpy(&body[i], frame.pps.bytes, ppsLen);
+        i += ppsLen;
+    }
+    
     body[i++] = (frame.data.length >> 24) & 0xff;
     body[i++] = (frame.data.length >> 16) & 0xff;
     body[i++] = (frame.data.length >>  8) & 0xff;
     body[i++] = (frame.data.length) & 0xff;
     memcpy(&body[i], frame.data.bytes, frame.data.length);
+    
+    [self sendPacket:RTMP_PACKET_TYPE_VIDEO data:body size:(rtmpLength) nTimestamp:frame.timestamp];
+    free(body);
+}
 
+- (void)sendSeiWithJson:(NSData *)data {
+    _seiData = data;
+}
+
+void
+print_bytes(void   *start,
+            size_t  length)
+{
+    uint8_t *base = NULL;
+    size_t   idx = 0;
+    
+    if (!start || length <= 0)
+        return;
+    
+    base = (uint8_t *)(start);
+    for (idx = 0; idx < length; idx++)
+        printf("%02X%s", base[idx] & 0xFF, (idx + 1) % 16 == 0 ? "\n" : " ");
+    printf("\n");
+}
+
+- (void)sendSeiAndVideo:(LFVideoFrame *)frame {
+    /* 17.Media System Time Synchronization UUID
+     * 7627DFE0-4924-4084-B98D-F2C9444B8E98 */
+    static const uint8_t app_17_uuid[] =
+    {0x76, 0x27, 0xDF, 0xE0,
+        0x49, 0x24, 0x40, 0x84,
+        0xB9, 0x8D, 0xF2, 0xC9,
+        0x44, 0x4B, 0x8E, 0x98};
+    
+    NSUInteger payloadSize = 16 + 1 + _seiData.length;
+    NSUInteger payloadSizeLength = payloadSize / 255 + 1;
+    
+    NSUInteger nalulen = 2 + payloadSizeLength + payloadSize + 1;
+    
+    NSInteger i = 0;
+    NSInteger rtmpLength = 5 + 4 + nalulen;
+    rtmpLength += 4 + frame.data.length;
+    
+    unsigned char *body = (unsigned char *)malloc(rtmpLength);
+    memset(body, 0, rtmpLength);
+    
+    if (frame.isKeyFrame) {
+        body[i++] = 0x17;        // 1:Iframe  7:AVC
+    } else {
+        body[i++] = 0x27;        // 2:Pframe  7:AVC
+    }
+    body[i++] = 0x01;    // AVC NALU
+    body[i++] = 0x00;
+    body[i++] = 0x00;
+    body[i++] = 0x00;
+    
+    /* nalu length */
+    body[i++] = (nalulen >> 24) & 0xff;
+    body[i++] = (nalulen >> 16) & 0xff;
+    body[i++] = (nalulen >>  8) & 0xff;
+    body[i++] = (nalulen) & 0xff;
+    
+    /* SEI NALU header, user unregistered type, and payload size */
+    body[i++] = 0x66;
+    body[i++] = 0x05;
+    NSUInteger size = payloadSize;
+    while (size >= 255) {
+        body[i++] = 0xff;
+        size -= 255;
+    }
+    body[i++] = (uint8_t)size;
+    
+    /* UUID */
+    memcpy(&body[i], app_17_uuid, sizeof(app_17_uuid));
+    i += sizeof(app_17_uuid);
+    
+    /* content type */
+    body[i++] = 0x01;
+    
+    /* data */
+    memcpy(&body[i], _seiData.bytes, _seiData.length);
+    i += _seiData.length;
+    
+    /* rbsp_trailing_bits */
+    body[i++] = 0x80;
+    
+    //    NSLog(@"send sei");
+    //    print_bytes(body, rtmpLength - 4 - frame.data.length);
+    
+    // video frame
+    body[i++] = (frame.data.length >> 24) & 0xff;
+    body[i++] = (frame.data.length >> 16) & 0xff;
+    body[i++] = (frame.data.length >>  8) & 0xff;
+    body[i++] = (frame.data.length) & 0xff;
+    memcpy(&body[i], frame.data.bytes, frame.data.length);
+    i += frame.data.length;
+    
     [self sendPacket:RTMP_PACKET_TYPE_VIDEO data:body size:(rtmpLength) nTimestamp:frame.timestamp];
     free(body);
 }
@@ -426,7 +604,7 @@ Failed:
     PILI_RTMPPacket rtmp_pack;
     PILI_RTMPPacket_Reset(&rtmp_pack);
     PILI_RTMPPacket_Alloc(&rtmp_pack, (uint32_t)rtmpLength);
-
+    
     rtmp_pack.m_nBodySize = (uint32_t)size;
     memcpy(rtmp_pack.m_body, data, size);
     rtmp_pack.m_hasAbsTimestamp = 0;
@@ -438,9 +616,9 @@ Failed:
         rtmp_pack.m_headerType = RTMP_PACKET_SIZE_MEDIUM;
     }
     rtmp_pack.m_nTimeStamp = (uint32_t)nTimestamp;
-
+    
     NSInteger nRet = [self RtmpPacketSend:&rtmp_pack];
-
+    
     PILI_RTMPPacket_Free(&rtmp_pack);
     return nRet;
 }
@@ -454,11 +632,11 @@ Failed:
 }
 
 - (void)sendAudioHeader:(LFAudioFrame *)audioFrame {
-
+    
     NSInteger rtmpLength = audioFrame.audioInfo.length + 2;     /*spec data长度,一般是2*/
     unsigned char *body = (unsigned char *)malloc(rtmpLength);
     memset(body, 0, rtmpLength);
-
+    
     /*AF 00 + AAC RAW data*/
     body[0] = 0xAF;
     body[1] = 0x00;
@@ -468,11 +646,11 @@ Failed:
 }
 
 - (void)sendAudio:(LFFrame *)frame {
-
+    
     NSInteger rtmpLength = frame.data.length + 2;    /*spec data长度,一般是2*/
     unsigned char *body = (unsigned char *)malloc(rtmpLength);
     memset(body, 0, rtmpLength);
-
+    
     /*AF 01 + AAC RAW data*/
     body[0] = 0xAF;
     body[1] = 0x01;
@@ -489,9 +667,9 @@ Failed:
             self.isConnecting = NO;
             self.isReconnecting = YES;
             dispatch_async(dispatch_get_main_queue(), ^{
-                 [self performSelector:@selector(_reconnect) withObject:nil afterDelay:self.reconnectInterval];
+                [self performSelector:@selector(_reconnect) withObject:nil afterDelay:self.reconnectInterval];
             });
-           
+            
         } else if (self.retryTimes4netWorkBreaken >= self.reconnectCount) {
             if (self.delegate && [self.delegate respondsToSelector:@selector(socketStatus:status:)]) {
                 [self.delegate socketStatus:self status:LFLiveError];
@@ -507,10 +685,8 @@ Failed:
     [NSObject cancelPreviousPerformRequestsWithTarget:self];
     
     _isReconnecting = NO;
-    if(_isConnected) return;
-    
-    _isReconnecting = NO;
     if (_isConnected) return;
+    
     if (_rtmp != NULL) {
         PILI_RTMP_Close(_rtmp, &_error);
         PILI_RTMP_Free(_rtmp);
@@ -563,7 +739,7 @@ void ConnectionTimeCallback(PILI_CONNECTION_TIME *conn_time, void *userData) {
     if (!_buffer) {
         _buffer = [[LFStreamingBuffer alloc] init];
         _buffer.delegate = self;
-
+        
     }
     return _buffer;
 }
