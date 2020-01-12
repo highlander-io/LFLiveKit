@@ -1,15 +1,7 @@
-//
-//  LFLiveDebug.h
-//  LaiFeng
-//
-//  Created by LaiFeng on 16/5/20.
-//  Copyright © 2016年 LaiFeng All rights reserved.
-//
-
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
-@interface LFLiveDebug : NSObject
+@interface LFLiveDebug : NSObject <NSCopying>
 
 @property (nonatomic, copy) NSString *streamId;                         ///< 流id
 @property (nonatomic, copy) NSString *uploadUrl;                        ///< 流地址
@@ -18,6 +10,12 @@
 
 @property (nonatomic, assign) CGFloat elapsedMilli;                     ///< 距离上次统计的时间 单位ms
 @property (nonatomic, assign) CGFloat timeStamp;                        ///< 当前的时间戳，从而计算1s内数据
+
+@property (nonatomic, assign) CGFloat elapsedMilliForSpeed;             ///< 距离上次统计的时间 单位ms
+@property (nonatomic, assign) CGFloat timeStampForSpeed;                ///< 当前的时间戳，从而计算1s内数据
+@property (nonatomic, assign) CGFloat bandwidthForSpeed;                ///< 20s内总带宽
+@property (nonatomic, assign) CGFloat lastSpeed;                        ///< 20s内平均速度，上次的统计速度。
+
 @property (nonatomic, assign) CGFloat dataFlow;                         ///< 总流量
 @property (nonatomic, assign) CGFloat bandwidth;                        ///< 1s内总带宽
 @property (nonatomic, assign) CGFloat currentBandwidth;                 ///< 上次的带宽
