@@ -10,7 +10,7 @@
 
 @interface LFAudioFrame : LFFrame
 
-// flv packaged in aac header
+/// flv打包中aac的header
 @property (nonatomic, strong) NSData *audioInfo;
 
 @end

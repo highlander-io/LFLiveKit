@@ -8,10 +8,12 @@
 
 #import "LFFrame.h"
 
+
 @interface LFVideoFrame : LFFrame
 
 @property (nonatomic, assign) BOOL isKeyFrame;
 @property (nonatomic, strong) NSData *sps;
 @property (nonatomic, strong) NSData *pps;
+@property (nonatomic, assign) BOOL formatChanged;
 
 @end

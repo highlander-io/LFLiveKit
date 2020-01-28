@@ -10,6 +10,10 @@
 
 @interface LFHardwareAudioEncoder : NSObject<LFAudioEncoding>
 
+#pragma mark - Initializer
+///=============================================================================
+/// @name Initializer
+///=============================================================================
 - (nullable instancetype)init UNAVAILABLE_ATTRIBUTE;
 + (nullable instancetype)new UNAVAILABLE_ATTRIBUTE;
 
