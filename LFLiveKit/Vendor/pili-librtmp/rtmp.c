@@ -32,8 +32,7 @@
 
 #include "log.h"
 #include "rtmp_sys.h"
-#include "time.h"
-
+#include <time.h>
 #ifdef CRYPTO
 #ifdef USE_POLARSSL
 #include <polarssl/havege.h>
