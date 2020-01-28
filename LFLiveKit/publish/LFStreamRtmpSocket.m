@@ -659,25 +659,49 @@ print_bytes(void   *start,
     free(body);
 }
 
-// 断线重连
+//// 断线重连
+//- (void)reconnect {
+//    dispatch_async(self.rtmpSendQueue, ^{
+//        if (self.retryTimes4netWorkBreaken++ < self.reconnectCount && !self.isReconnecting) {
+//            self.isConnected = NO;
+//            self.isConnecting = NO;
+//            self.isReconnecting = YES;
+//            dispatch_async(dispatch_get_main_queue(), ^{
+//                [self performSelector:@selector(_reconnect) withObject:nil afterDelay:self.reconnectInterval];
+//            });
+//
+//        } else if (self.retryTimes4netWorkBreaken >= self.reconnectCount) {
+//            if (self.delegate && [self.delegate respondsToSelector:@selector(socketStatus:status:)]) {
+//                [self.delegate socketStatus:self status:LFLiveError];
+//            }
+//            if (self.delegate && [self.delegate respondsToSelector:@selector(socketDidError:errorCode:)]) {
+//                [self.delegate socketDidError:self errorCode:LFLiveSocketError_ReConnectTimeOut];
+//            }
+//        }
+//    });
+//}
+
 - (void)reconnect {
     dispatch_async(self.rtmpSendQueue, ^{
-        if (self.retryTimes4netWorkBreaken++ < self.reconnectCount && !self.isReconnecting) {
-            self.isConnected = NO;
-            self.isConnecting = NO;
-            self.isReconnecting = YES;
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self performSelector:@selector(_reconnect) withObject:nil afterDelay:self.reconnectInterval];
-            });
-            
-        } else if (self.retryTimes4netWorkBreaken >= self.reconnectCount) {
-            if (self.delegate && [self.delegate respondsToSelector:@selector(socketStatus:status:)]) {
-                [self.delegate socketStatus:self status:LFLiveError];
-            }
-            if (self.delegate && [self.delegate respondsToSelector:@selector(socketDidError:errorCode:)]) {
-                [self.delegate socketDidError:self errorCode:LFLiveSocketError_ReConnectTimeOut];
-            }
-        }
+        NSLog(@"Reconnecting... Highlander log");
+        [self stop];
+        [self start];
+//        if (self.retryTimes4netWorkBreaken++ < self.reconnectCount && !self.isReconnecting) {
+//            self.isConnected = NO;
+//            self.isConnecting = NO;
+//            self.isReconnecting = YES;
+//            dispatch_async(dispatch_get_main_queue(), ^{
+//                [self performSelector:@selector(_reconnect) withObject:nil afterDelay:self.reconnectInterval];
+//            });
+//
+//        } else if (self.retryTimes4netWorkBreaken >= self.reconnectCount) {
+//            if (self.delegate && [self.delegate respondsToSelector:@selector(socketStatus:status:)]) {
+//                [self.delegate socketStatus:self status:LFLiveError];
+//            }
+//            if (self.delegate && [self.delegate respondsToSelector:@selector(socketDidError:errorCode:)]) {
+//                [self.delegate socketDidError:self errorCode:LFLiveSocketError_ReConnectTimeOut];
+//            }
+//        }
     });
 }
 
