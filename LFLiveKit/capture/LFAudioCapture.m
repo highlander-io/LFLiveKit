@@ -7,45 +7,36 @@
 //
 
 #import "LFAudioCapture.h"
-#import "RKSoundMix.h"
-#import "RKMultiAudioMix.h"
+
 #import <AudioToolbox/AudioToolbox.h>
 #import <AVFoundation/AVFoundation.h>
 
+
 NSString *const LFAudioComponentFailedToCreateNotification = @"LFAudioComponentFailedToCreateNotification";
+
 
 @interface LFAudioCapture ()
 
-@property (nonatomic, assign) AudioComponentInstance componetInstance;
+@property (nonatomic, assign) AudioComponentInstance componentInstance;
 @property (nonatomic, assign) AudioComponent component;
 @property (nonatomic, strong) dispatch_queue_t taskQueue;
 @property (nonatomic, assign) BOOL isRunning;
-@property (nonatomic, strong,nullable) LFLiveAudioConfiguration *configuration;
-
-@property (strong, nonatomic) NSMutableArray<RKAudioMixPart *> *urlmixPartQueue;
-
-@property (strong, nonatomic) NSMutableDictionary<NSURL *, RKAudioURLMixSrc *> *urlSrcCache;
-
-@property (strong, nonatomic) NSMutableDictionary<NSURL *, RKAudioMixPart *> *urlMixParts;
-
-@property (strong, nonatomic) RKAudioMixPart *sideDataPart;
-
-@property (weak, nonatomic) RKAudioMixPart *playingPartSingle;
-@property (weak, nonatomic) RKAudioMixPart *playingPartInQueue;
+@property (nonatomic, strong,nullable) LFAudioConfiguration *configuration;
 
 @end
+
 
 @implementation LFAudioCapture
 
 #pragma mark -- LiftCycle
-- (instancetype)initWithAudioConfiguration:(LFLiveAudioConfiguration *)configuration{
+- (instancetype)initWithAudioConfiguration:(LFAudioConfiguration *)configuration {
     if(self = [super init]){
         _configuration = configuration;
         self.isRunning = NO;
         self.taskQueue = dispatch_queue_create("com.youku.Laifeng.audioCapture.Queue", NULL);
         
         AVAudioSession *session = [AVAudioSession sharedInstance];
-        [session setMode:AVAudioSessionModeDefault error:nil];
+        
         
         [[NSNotificationCenter defaultCenter] addObserver: self
                                                  selector: @selector(handleRouteChange:)
@@ -58,8 +49,8 @@ NSString *const LFAudioComponentFailedToCreateNotification = @"LFAudioComponentF
         
         AudioComponentDescription acd;
         acd.componentType = kAudioUnitType_Output;
-//        acd.componentSubType = kAudioUnitSubType_VoiceProcessingIO;
-        acd.componentSubType = configuration.echoCancellation ? kAudioUnitSubType_VoiceProcessingIO : kAudioUnitSubType_RemoteIO;
+        //acd.componentSubType = kAudioUnitSubType_VoiceProcessingIO;
+        acd.componentSubType = kAudioUnitSubType_RemoteIO;
         acd.componentManufacturer = kAudioUnitManufacturer_Apple;
         acd.componentFlags = 0;
         acd.componentFlagsMask = 0;
@@ -67,7 +58,7 @@ NSString *const LFAudioComponentFailedToCreateNotification = @"LFAudioComponentF
         self.component = AudioComponentFindNext(NULL, &acd);
         
         OSStatus status = noErr;
-        status = AudioComponentInstanceNew(self.component, &_componetInstance);
+        status = AudioComponentInstanceNew(self.component, &_componentInstance);
         
         if (noErr != status) {
             [self handleAudioComponentCreationFailure];
@@ -75,7 +66,7 @@ NSString *const LFAudioComponentFailedToCreateNotification = @"LFAudioComponentF
         
         UInt32 flagOne = 1;
         
-        AudioUnitSetProperty(self.componetInstance, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &flagOne, sizeof(flagOne));
+        AudioUnitSetProperty(self.componentInstance, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &flagOne, sizeof(flagOne));
         
         AudioStreamBasicDescription desc = {0};
         desc.mSampleRate = _configuration.audioSampleRate;
@@ -90,10 +81,10 @@ NSString *const LFAudioComponentFailedToCreateNotification = @"LFAudioComponentF
         AURenderCallbackStruct cb;
         cb.inputProcRefCon = (__bridge void *)(self);
         cb.inputProc = handleInputBuffer;
-        AudioUnitSetProperty(self.componetInstance, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &desc, sizeof(desc));
-        AudioUnitSetProperty(self.componetInstance, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitScope_Global, 1, &cb, sizeof(cb));
+        AudioUnitSetProperty(self.componentInstance, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &desc, sizeof(desc));
+        AudioUnitSetProperty(self.componentInstance, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitScope_Global, 1, &cb, sizeof(cb));
         
-        status = AudioUnitInitialize(self.componetInstance);
+        status = AudioUnitInitialize(self.componentInstance);
         
         if (noErr != status) {
             [self handleAudioComponentCreationFailure];
@@ -101,13 +92,10 @@ NSString *const LFAudioComponentFailedToCreateNotification = @"LFAudioComponentF
         
         [session setPreferredSampleRate:_configuration.audioSampleRate error:nil];
         [session setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionInterruptSpokenAudioAndMixWithOthers error:nil];
+		[session setMode:AVAudioSessionModeVideoRecording error:nil];
         [session setActive:YES withOptions:kAudioSessionSetActiveFlag_NotifyOthersOnDeactivation error:nil];
         
         [session setActive:YES error:nil];
-        
-        _urlmixPartQueue = [NSMutableArray new];
-        _urlSrcCache = [NSMutableDictionary  new];
-        _urlMixParts = [NSMutableDictionary new];
     }
     return self;
 }
@@ -116,146 +104,14 @@ NSString *const LFAudioComponentFailedToCreateNotification = @"LFAudioComponentF
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 
     dispatch_sync(self.taskQueue, ^{
-        if (self.componetInstance) {
+        if (self.componentInstance) {
             self.isRunning = NO;
-            AudioOutputUnitStop(self.componetInstance);
-            AudioComponentInstanceDispose(self.componetInstance);
-            self.componetInstance = nil;
+            AudioOutputUnitStop(self.componentInstance);
+            AudioComponentInstanceDispose(self.componentInstance);
+            self.componentInstance = nil;
             self.component = nil;
         }
     });
-}
-
-- (RKAudioURLMixSrc *)sourceWithURL:(NSURL *)url {
-    RKAudioURLMixSrc *src = self.urlSrcCache[url];
-    if (!src) {
-        src = [[RKAudioURLMixSrc alloc] initWithURL:url];
-        src.mixingChannels = self.configuration.numberOfChannels;
-        self.urlSrcCache[url] = src;
-    }
-    return src;
-}
-
-- (void)mixSound:(nonnull NSURL *)url weight:(float)weight {
-    [self mixSound:url weight:weight repeated:NO];
-}
-
-- (void)mixSound:(nonnull NSURL *)url weight:(float)weight repeated:(BOOL)repeated {
-    RKAudioMixPart *part = self.urlMixParts[url];
-    if (part) {
-        [(RKAudioURLMixSrc*)part.source reset];
-        ((RKAudioURLMixSrc*)part.source).repeated = repeated;
-    } else {
-        if ([self.playingPartSingle.source isKindOfClass:RKAudioURLMixSrc.class]) {
-            NSURL *url = ((RKAudioURLMixSrc*)self.playingPartSingle.source).soundURL;
-            self.urlMixParts[url] = nil;
-        }
-        RKAudioURLMixSrc *src = [self sourceWithURL:url];
-        [src reset];
-        src.repeated = repeated;
-        part = [[RKAudioMixPart alloc] init];
-        part.source = src;
-        self.urlMixParts[url] = part;
-    }
-    part.weight = weight;
-    self.playingPartSingle = part;
-}
-
-- (void)mixSounds:(nonnull NSArray<NSURL *> *)urls weights:(nonnull NSArray<NSNumber *> *)weights {
-    for (int i = 0; i < urls.count; i++) {
-        NSURL *url = urls[i];
-        RKAudioMixPart *part = self.urlMixParts[url];
-        if (part) {
-            [(RKAudioURLMixSrc*)part.source reset];
-            ((RKAudioURLMixSrc*)part.source).repeated = NO;
-        } else {
-            RKAudioURLMixSrc *src = [self sourceWithURL:url];
-            [src reset];
-            src.repeated = NO;
-            part = [[RKAudioMixPart alloc] init];
-            part.source = src;
-            self.urlMixParts[url] = part;
-        }
-        part.weight = i < weights.count ? weights[i].floatValue : 0.5;
-    }
-}
-
-- (void)mixSoundSequences:(nonnull NSArray<NSURL *> *)urls weight:(float)weight {
-    @synchronized (_urlmixPartQueue) {
-        for (NSURL *url in urls) {
-            RKAudioURLMixSrc *src = [self sourceWithURL:url];
-            [src reset];
-            src.repeated = NO;
-            RKAudioMixPart *part = [[RKAudioMixPart alloc] init];
-            part.source = src;
-            part.weight = weight;
-            [self.urlmixPartQueue addObject:part];
-        }
-    }
-}
-
-- (void)prepareNextMixSound {
-    @synchronized (_urlmixPartQueue) {
-        RKAudioMixPart *part = self.urlmixPartQueue.firstObject;
-        if (part) {
-            [(RKAudioURLMixSrc*)part.source reset];
-            NSURL *url = ((RKAudioURLMixSrc*)part.source).soundURL;
-            self.urlMixParts[url] = part;
-            self.playingPartInQueue = part;
-            [self.urlmixPartQueue removeObjectAtIndex:0];
-        }
-    }
-}
-
-- (void)mixSideData:(nonnull NSData *)data weight:(float)weight {
-    if (!self.sideDataPart) {
-        self.sideDataPart = [[RKAudioMixPart alloc] init];
-        self.sideDataPart.source = [[RKAudioDataMixSrc alloc] init];
-    }
-    self.sideDataPart.weight = weight;
-    [(RKAudioDataMixSrc*)self.sideDataPart.source pushData:data];
-}
-
-- (void)stopMixSound:(NSURL *)url {
-    self.urlMixParts[url] = nil;
-}
-
-- (void)stopMixAllSounds {
-    @synchronized(_urlmixPartQueue) {
-        [self.urlmixPartQueue removeAllObjects];
-    }
-    [self.urlMixParts removeAllObjects];
-}
-
-- (void)processAudio:(AudioBufferList)buffers {
-    for (NSURL *url in self.urlMixParts.allKeys) {
-        RKAudioMixPart *part = self.urlMixParts[url];
-        RKAudioURLMixSrc *src = part.source;
-        if (src.isFinished) {
-            self.urlMixParts[url] = nil;
-        }
-    }
-    if (!self.playingPartInQueue && self.urlmixPartQueue.count > 0) {
-        [self prepareNextMixSound];
-    }
-    
-    [RKMultiAudioMix mixParts:self.urlMixParts.allValues onAudio:buffers];
-    
-    [self.delegate captureOutput:self audioBeforeSideMixing:[NSData dataWithBytes:buffers.mBuffers[0].mData length:buffers.mBuffers[0].mDataByteSize]];
-
-    if (self.sideDataPart) {
-        [RKMultiAudioMix mixParts:@[self.sideDataPart] onAudio:buffers];
-    }
-
-    if (self.muted) {
-        for (int i = 0; i < buffers.mNumberBuffers; i++) {
-            AudioBuffer ab = buffers.mBuffers[i];
-            memset(ab.mData, 0, ab.mDataByteSize);
-        }
-    }
-    
-    // samples: 一個audio frame所涵蓋的sample數, 因為mBitsPerChannel=16, 1 byte=8 bits, 一個audio frame有32 bits(雙聲道的話), 換算起來就是總bytes / 2(一個聲道有16 bits) / 2(雙聲道)
-    [self.delegate captureOutput:self didFinishAudioProcessing:buffers samples:(buffers.mBuffers[0].mDataByteSize / (2 * _configuration.numberOfChannels))];
 }
 
 #pragma mark -- Setter
@@ -267,13 +123,13 @@ NSString *const LFAudioComponentFailedToCreateNotification = @"LFAudioComponentF
             self.isRunning = YES;
             NSLog(@"MicrophoneSource: startRunning");
             [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionInterruptSpokenAudioAndMixWithOthers error:nil];
-            AudioOutputUnitStart(self.componetInstance);
+            AudioOutputUnitStart(self.componentInstance);
         });
     } else {
         dispatch_sync(self.taskQueue, ^{
             self.isRunning = NO;
             NSLog(@"MicrophoneSource: stopRunning");
-            AudioOutputUnitStop(self.componetInstance);
+            AudioOutputUnitStop(self.componentInstance);
         });
     }
 }
@@ -323,7 +179,8 @@ NSString *const LFAudioComponentFailedToCreateNotification = @"LFAudioComponentF
     }
 }
 
-- (void)handleInterruption:(NSNotification *)notification {
+- (void)handleInterruption:(NSNotification *)notification
+{
     NSInteger reason = 0;
     NSString *reasonStr = @"";
     if ([notification.name isEqualToString:AVAudioSessionInterruptionNotification]) {
@@ -333,7 +190,7 @@ NSString *const LFAudioComponentFailedToCreateNotification = @"LFAudioComponentF
             if (self.isRunning) {
                 dispatch_sync(self.taskQueue, ^{
                     NSLog(@"MicrophoneSource: stopRunning");
-                    AudioOutputUnitStop(self.componetInstance);
+                    AudioOutputUnitStop(self.componentInstance);
                 });
             }
         }
@@ -346,7 +203,7 @@ NSString *const LFAudioComponentFailedToCreateNotification = @"LFAudioComponentF
                 if (self.isRunning) {
                     dispatch_async(self.taskQueue, ^{
                         NSLog(@"MicrophoneSource: startRunning");
-                        AudioOutputUnitStart(self.componetInstance);
+                        AudioOutputUnitStart(self.componentInstance);
                     });
                 }
                 // Indicates that the audio session is active and immediately ready to be used. Your app can resume the audio operation that was interrupted.
@@ -381,14 +238,24 @@ static OSStatus handleInputBuffer(void *inRefCon,
         buffers.mNumberBuffers = 1;
         buffers.mBuffers[0] = buffer;
 
-        OSStatus status = AudioUnitRender(source.componetInstance,
+        OSStatus status = AudioUnitRender(source.componentInstance,
                                           ioActionFlags,
                                           inTimeStamp,
                                           inBusNumber,
                                           inNumberFrames,
                                           &buffers);
+
+        if (source.muted) {
+            for (int i = 0; i < buffers.mNumberBuffers; i++) {
+                AudioBuffer ab = buffers.mBuffers[i];
+                memset(ab.mData, 0, ab.mDataByteSize);
+            }
+        }
+
         if (!status) {
-            [source processAudio:buffers];
+            if (source.delegate && [source.delegate respondsToSelector:@selector(captureOutput:audioData:)]) {
+                [source.delegate captureOutput:source audioData:[NSData dataWithBytes:buffers.mBuffers[0].mData length:buffers.mBuffers[0].mDataByteSize]];
+            }
         }
         return status;
     }
