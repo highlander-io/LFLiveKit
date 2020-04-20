@@ -540,6 +540,8 @@
                  }
             }
         }
+        
+        [[LFStreamLog logger] logWithDict:@{@"vbr": @(videoBitRate)}];
     }
 }
 
