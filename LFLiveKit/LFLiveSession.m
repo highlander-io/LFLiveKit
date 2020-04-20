@@ -529,21 +529,23 @@
             if (videoBitRate < _videoConfiguration.videoMaxBitRate) {
                 videoBitRate = videoBitRate + 50 * 1000;
                 [self.videoEncoder setVideoBitRate:videoBitRate];
-                NSLog(@"Increase bitrate %@", @(videoBitRate));
+                NSLog(@"Increase bitrate2 %@", @(videoBitRate));
+                [[LFStreamLog logger] logWithDict:@{@"lt": @"pbrt",
+                                                                      @"vbr": @(videoBitRate)
+                                                                      }];
             }
         } else if (status == LFLiveBuffferIncrease) {
             if (videoBitRate > self.videoConfiguration.videoMinBitRate) {
                 videoBitRate = videoBitRate - 100 * 1000;
                  if (videoBitRate > (self.videoConfiguration.videoMinBitRate - 1000)) {
                     [self.videoEncoder setVideoBitRate:videoBitRate];
-                    NSLog(@"Decline bitrate %@", @(videoBitRate));
+                    NSLog(@"Decline bitrate2 %@", @(videoBitRate));
+                     [[LFStreamLog logger] logWithDict:@{@"lt": @"pbrt",
+                                                                           @"vbr": @(videoBitRate)
+                                                                           }];
                  }
             }
         }
-        
-                    [[LFStreamLog logger] logWithDict:@{@"lt": @"pbrt",
-                                                        @"vbr": @(videoBitRate)
-                                                        }];
     }
 }
 
