@@ -221,6 +221,7 @@ SAVC(mp4a);
             }
             
             //debug更新
+            _self.debugInfo.currentBitrate = _stream.videoConfiguration.videoBitRate;
             _self.debugInfo.totalFrame++;
             _self.debugInfo.dropFrame += _self.buffer.lastDropFrames;
             _self.buffer.lastDropFrames = 0;

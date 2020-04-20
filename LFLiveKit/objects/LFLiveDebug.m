@@ -32,6 +32,7 @@
     debug.currentCapturedAudioCount = self.currentCapturedAudioCount;
     debug.currentCapturedVideoCount = self.currentCapturedVideoCount;
     debug.unSendCount = self.unSendCount;
+    debug.currentBitrate = self.currentBitrate;
     return debug;
 }
 
