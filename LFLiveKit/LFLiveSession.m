@@ -541,7 +541,9 @@
             }
         }
         
-        [[LFStreamLog logger] logWithDict:@{@"vbr": @(videoBitRate)}];
+                    [[LFStreamLog logger] logWithDict:@{@"lt": @"pbrt",
+                                                        @"vbr": @(videoBitRate)
+                                                        }];
     }
 }
 
