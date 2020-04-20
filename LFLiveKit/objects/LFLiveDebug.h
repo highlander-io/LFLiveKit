@@ -30,7 +30,6 @@
 
 @property (nonatomic, assign) NSInteger dropFrame;                      ///< 丢掉的帧数
 @property (nonatomic, assign) NSInteger totalFrame;                     ///< 总帧数
-@property (nonatomic, assign) CGFloat currentBitrate; 
 @property (nonatomic, assign) NSInteger capturedAudioCount;             ///< 1s内音频捕获个数
 @property (nonatomic, assign) NSInteger capturedVideoCount;             ///< 1s内视频捕获个数
 @property (nonatomic, assign) NSInteger currentCapturedAudioCount;      ///< 上次的音频捕获个数
